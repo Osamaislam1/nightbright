@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Validator;
 use Stripe\Stripe;
 use Stripe\Checkout\Session;
 use Stripe\Exception\ApiErrorException;
+use Stripe\PaymentMethod;
 
 class DonationController extends Controller
 {
@@ -30,7 +31,9 @@ class DonationController extends Controller
             'message' => 'nullable|string',
             'contact_permission' => 'required|boolean',
             'stay_anonymous' => 'required|boolean',
-            'tip_percentage' => 'nullable|numeric|min:0|max:100'
+            'tip_percentage' => 'nullable|numeric|min:0|max:100',
+            'processing_fee' => 'nullable|numeric|min:0',
+            'tip_amount' => 'nullable|numeric|min:0'
         ]);
 
         if ($validator->fails()) {
@@ -41,9 +44,9 @@ class DonationController extends Controller
             $amount = (float) $request->amount;
             $tipPercentage = (int) ($request->tip_percentage ?? 0);
             
-            // Calculate processing fee and tip amount
-            $processingFee = ($amount * 0.029) + 0.30;
-            $tipAmount = ($amount * $tipPercentage / 100);
+            // Use processing fee and tip amount from form if provided, otherwise calculate
+            $processingFee = $request->has('processing_fee') ? (float) $request->processing_fee : (($amount * 0.029) + 0.30);
+            $tipAmount = $request->has('tip_amount') ? (float) $request->tip_amount : ($amount * $tipPercentage / 100);
             $totalAmount = $amount + $processingFee + $tipAmount;
             
             // Convert amount to cents for Stripe
@@ -51,6 +54,11 @@ class DonationController extends Controller
             
             // Set your Stripe API key
             Stripe::setApiKey(config('cashier.secret'));
+            
+            // Convert individual amounts to cents for Stripe
+            $donationAmountInCents = (int) ($amount * 100);
+            $processingFeeInCents = (int) ($processingFee * 100);
+            $tipAmountInCents = (int) ($tipAmount * 100);
             
             // Prepare line items for Stripe checkout
             $lineItems = [
@@ -60,7 +68,7 @@ class DonationController extends Controller
                         'product_data' => [
                             'name' => 'Donation to ' . $request->organization,
                         ],
-                        'unit_amount' => $amountInCents,
+                        'unit_amount' => $donationAmountInCents,
                         // Add recurring parameter for subscription
                         'recurring' => $request->donation_type === 'monthly' ? [
                             'interval' => 'month',
@@ -70,6 +78,42 @@ class DonationController extends Controller
                     'quantity' => 1,
                 ],
             ];
+            
+            // Add processing fee as a separate line item
+            if ($processingFee > 0) {
+                $lineItems[] = [
+                    'price_data' => [
+                        'currency' => 'usd',
+                        'product_data' => [
+                            'name' => 'Processing Fee',
+                        ],
+                        'unit_amount' => $processingFeeInCents,
+                        'recurring' => $request->donation_type === 'monthly' ? [
+                            'interval' => 'month',
+                            'interval_count' => 1,
+                        ] : null,
+                    ],
+                    'quantity' => 1,
+                ];
+            }
+            
+            // Add tip as a separate line item if it exists
+            if ($tipAmount > 0) {
+                $lineItems[] = [
+                    'price_data' => [
+                        'currency' => 'usd',
+                        'product_data' => [
+                            'name' => 'Tip to support Night Bright',
+                        ],
+                        'unit_amount' => $tipAmountInCents,
+                        'recurring' => $request->donation_type === 'monthly' ? [
+                            'interval' => 'month',
+                            'interval_count' => 1,
+                        ] : null,
+                    ],
+                    'quantity' => 1,
+                ];
+            }
             
             // Create a checkout session
             $session = Session::create([
@@ -139,6 +183,72 @@ class DonationController extends Controller
     public function cancel()
     {
         return redirect('/')->with('info', 'Your donation has been cancelled.');
+    }
+    
+    /**
+     * Get real-time processing fee rates from Stripe
+     *
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getProcessingFees(Request $request)
+    {
+        try {
+            // Set your Stripe API key
+            Stripe::setApiKey(config('cashier.secret'));
+            
+            $paymentMethod = $request->input('payment_method', 'card');
+            $cardBrand = $request->input('card_brand', 'visa');
+            
+            // Default fee rates based on payment method and card brand
+            $feeRates = [
+                'card' => [
+                    'visa' => ['percentage' => 2.9, 'fixed' => 0.30],
+                    'mastercard' => ['percentage' => 2.9, 'fixed' => 0.30],
+                    'amex' => ['percentage' => 3.5, 'fixed' => 0.30],
+                    'discover' => ['percentage' => 2.9, 'fixed' => 0.30],
+                    'default' => ['percentage' => 2.9, 'fixed' => 0.30],
+                ],
+                'us_bank_account' => ['percentage' => 0.8, 'fixed' => 0.30],
+                'cashapp' => ['percentage' => 2.5, 'fixed' => 0.30],
+                'default' => ['percentage' => 2.9, 'fixed' => 0.30],
+            ];
+            
+            // Get the appropriate fee rate
+            if ($paymentMethod === 'card') {
+                $feeRate = $feeRates['card'][$cardBrand] ?? $feeRates['card']['default'];
+            } else {
+                $feeRate = $feeRates[$paymentMethod] ?? $feeRates['default'];
+            }
+            
+            // Calculate example fees for common amounts
+            $exampleAmounts = [10, 25, 50, 100, 250, 500, 1000];
+            $exampleFees = [];
+            
+            foreach ($exampleAmounts as $amount) {
+                $fee = ($amount * $feeRate['percentage'] / 100) + $feeRate['fixed'];
+                $exampleFees[$amount] = round($fee, 2);
+            }
+            
+            return response()->json([
+                'success' => true,
+                'fee_rate' => $feeRate,
+                'example_fees' => $exampleFees
+            ]);
+            
+        } catch (ApiErrorException $e) {
+            Log::error('Stripe API Error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Payment processing fee calculation failed: ' . $e->getMessage()
+            ], 500);
+        } catch (Exception $e) {
+            Log::error('Processing Fee Error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'An error occurred while calculating processing fees.'
+            ], 500);
+        }
     }
     
     /**

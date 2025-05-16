@@ -11,9 +11,8 @@
         <!-- Font Awesome -->
         <link
         rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-        <!-- Google Fonts -->
-        <link
-        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+        <!-- Google Fonts: Poppins -->
+        <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
         <!-- Custom CSS -->
         <link rel="stylesheet" href="{{asset('frontend/css/styles.css')}}">
         <!-- Donation CSS -->
@@ -24,8 +23,8 @@
             <div class="container">
                 <a
                     class="navbar-brand" href="#">
-                    <!-- <img src="logo.avif" alt="Night Bright" height="30"> -->
-                    Night Bright
+                <img src="{{asset('frontend/images/logo.svg')}}" alt="Night Bright" height="30"> 
+                 
                 </a>
 
                 <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">

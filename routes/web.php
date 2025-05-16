@@ -11,3 +11,4 @@ Route::post('/donation/checkout', [DonationController::class, 'createCheckoutSes
 Route::get('/donation/success', [DonationController::class, 'success'])->name('donation.success');
 Route::get('/donation/cancel', [DonationController::class, 'cancel'])->name('donation.cancel');
 Route::post('/webhook/stripe', [DonationController::class, 'handleWebhook'])->name('webhook.stripe');
+Route::get('/api/stripe/processing-fees', [DonationController::class, 'getProcessingFees'])->name('api.stripe.processing-fees');
